@@ -11,7 +11,7 @@ import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { OrderPaginationDto } from './dto/order-pagination.dto';
 import { ChangeOrderStatusDto } from './dto';
 import { PRODUCT_SERVICE } from '../config/services';
-import { catchError, firstValueFrom } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class OrdersService extends PrismaClient implements OnModuleInit {
@@ -125,7 +125,10 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
   }
 
   async findOne(id: string) {
-    const order = await this.order.findUnique({ where: { id } });
+    const order = await this.order.findUnique({
+      where: { id },
+      include: { OrderItem: true },
+    });
     if (!order) {
       this.logger.error(`Order with id ${id} not found`);
       throw new RpcException({
@@ -134,7 +137,22 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
       });
     }
 
-    return order;
+    const productsId = order.OrderItem.map((orderItem) => orderItem.productId);
+
+    const products: any[] = await firstValueFrom(
+      this.productsClient.send({ cmd: 'validate_products' }, productsId),
+    );
+
+    return {
+      ...order,
+      OrderItem: order.OrderItem.map((orderItem) => {
+        return {
+          ...orderItem,
+          name: products.find((product) => product.id === orderItem.productId)
+            .name,
+        };
+      }),
+    };
   }
 
   async changeOrderStatus(changeOrderStatusDto: ChangeOrderStatusDto) {
